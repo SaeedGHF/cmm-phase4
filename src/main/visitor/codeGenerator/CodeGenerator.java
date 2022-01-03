@@ -119,7 +119,7 @@ public class CodeGenerator extends Visitor<String> {
         addCommand(mainDec);
 
         for (FunctionDeclaration functionDeclaration : program.getFunctions()) {
-            functionDeclaration.accept(this);
+            addCommand(functionDeclaration.accept(this));
         }
         for (StructDeclaration structDeclaration : program.getStructs()) {
             structDeclaration.accept(this);
