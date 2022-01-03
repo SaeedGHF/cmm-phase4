@@ -102,6 +102,15 @@ public class CodeGenerator extends Visitor<String> {
         addCommand(".end method");
     }
 
+    public String addMainInstance() {
+        return """
+                new Main
+                dup
+                invokespecial Main/<init>()V
+                astore_1
+                """;
+    }
+
     private int slotOf(String identifier) {
         //todo
         return 0;
@@ -117,12 +126,19 @@ public class CodeGenerator extends Visitor<String> {
 
         createFile("Main");
         addMainDeclaration();
-        addStaticMainMethod();
+        //addStaticMainMethod();
+        //addMainInstance();
 
-        program.getMain().accept(this);
+        String mainDecCode = program.getMain().accept(this);
+        addCommand(mainDecCode);
 
         for (FunctionDeclaration functionDeclaration : program.getFunctions()) {
             functionDeclaration.accept(this);
+        }
+
+        for (StructDeclaration structDeclaration : program.getStructs()) {
+            String structName = structDeclaration.getStructName().getName();
+            createFile(structName);
         }
         return null;
     }
@@ -142,8 +158,21 @@ public class CodeGenerator extends Visitor<String> {
 
     @Override
     public String visit(MainDeclaration mainDeclaration) {
-        //todo
-        return null;
+
+        String code = """
+                .method public static main([Ljava/lang/String;)V
+                  .limit stack 140
+                  .limit locals 140
+                """;
+        //code += addMainInstance();
+        //code += mainDeclaration.getBody().accept(this);
+
+        code += """
+                  return
+                .end method
+                """;
+
+        return code;
     }
 
     @Override
