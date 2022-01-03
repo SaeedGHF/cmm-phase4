@@ -233,7 +233,7 @@ public class ExpressionTypeChecker extends Visitor<Type> {
         if(instanceType instanceof NoType)
             return new NoType();
 
-        if (!(instanceType instanceof FptrType )){
+        if (!(instanceType instanceof FptrType)){
             CallOnNoneFptrType exception = new CallOnNoneFptrType(funcCall.getLine());
             funcCall.addError(exception);
             return new NoType();

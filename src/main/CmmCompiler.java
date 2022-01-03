@@ -2,7 +2,6 @@ package main;
 
 import main.visitor.*;
 import main.visitor.codeGenerator.CodeGenerator;
-import main.visitor.codeGenerator.CodeGeneratorOld;
 import main.visitor.name.*;
 import main.visitor.type.*;
 import parsers.*;

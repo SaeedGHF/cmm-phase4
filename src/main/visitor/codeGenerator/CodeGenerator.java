@@ -13,6 +13,7 @@ import main.ast.types.primitives.*;
 import main.symbolTable.*;
 import main.symbolTable.exceptions.*;
 import main.symbolTable.items.FunctionSymbolTableItem;
+import main.symbolTable.items.StructSymbolTableItem;
 import main.visitor.Visitor;
 import main.visitor.type.ExpressionTypeChecker;
 
@@ -21,10 +22,41 @@ import java.lang.reflect.Array;
 import java.util.*;
 
 public class CodeGenerator extends Visitor<String> {
-    ExpressionTypeChecker expressionTypeChecker = new ExpressionTypeChecker();
+    ExpressionTypeChecker expressionTypeChecker;
     private String outputPath;
     private FileWriter currentFile;
     private int labelIndex = 0;
+    private boolean inStruct = false;
+    private FunctionSymbolTableItem curFunction;
+
+    private StructDeclaration currentStruct;
+    private FunctionDeclaration currentFunction;
+    private int lastTempValue;
+    private String stack_size;
+    private String locals_size;
+    private int labelNum = 0;
+    private ArrayList<String> breaks;
+    private ArrayList<String> continues;
+    private ArrayList<Integer> temp_vars;
+
+    public CodeGenerator() {
+        this.expressionTypeChecker = new ExpressionTypeChecker();
+        this.prepareOutputFolder();
+        this.lastTempValue = 0;
+        this.stack_size = "128";
+        this.locals_size = "128";
+        this.breaks = new ArrayList<>();
+        this.continues = new ArrayList<>();
+        this.temp_vars = new ArrayList<>();
+    }
+
+    public void setCurFunction(FunctionSymbolTableItem curFunction) {
+        this.curFunction = curFunction;
+    }
+
+    public FunctionSymbolTableItem getCurFunction() {
+        return this.curFunction;
+    }
 
     private int getFresh() {
         return labelIndex++;
@@ -91,46 +123,131 @@ public class CodeGenerator extends Visitor<String> {
         }
     }
 
-    private void addMainDeclaration() {
-        String command = """
-                .class public Main
-                .super java/lang/Object
-                """;
-        addCommand(command);
-    }
 
     private int slotOf(String identifier) {
-        //todo
-        return 0;
+        int cnt = 1;
+        for (VariableDeclaration arg : curFunction.getFunctionDeclaration().getArgs()) {
+            if (arg.getVarName().getName().equals(identifier))
+                return cnt;
+            cnt++;
+        }
+        return cnt;
     }
 
     @Override
     public String visit(Program program) {
-        prepareOutputFolder();
-
+        //prepareOutputFolder();
         for (StructDeclaration structDeclaration : program.getStructs()) {
             structDeclaration.accept(this);
         }
-
         createFile("Main");
-        addMainDeclaration();
-
-        String mainDec = program.getMain().accept(this);
-        addCommand(mainDec);
-
+        program.getMain().accept(this);
         for (FunctionDeclaration functionDeclaration : program.getFunctions()) {
-            addCommand(functionDeclaration.accept(this));
-        }
-        for (StructDeclaration structDeclaration : program.getStructs()) {
-            structDeclaration.accept(this);
+            functionDeclaration.accept(this);
         }
         return null;
+    }
+
+    private String makeTypeSignature(Type t, boolean premitive) {
+        if (t instanceof IntType) {
+            if (premitive)
+                return "I";
+            else
+                return "Ljava/lang/Integer;";
+        }
+        if (t instanceof BoolType) {
+            if (premitive)
+                return "Z";
+            else
+                return "Ljava/lang/Boolean;";
+        }
+        if (t instanceof StructType)
+            return "L" + ((StructType) t).getStructName().getName() + ";";
+        if (t instanceof ListType)
+            return "LList;";
+        if (t instanceof FptrType)
+            return "LFptr;";
+        if (t instanceof VoidType)
+            return "V";
+        return null;
+    }
+
+    private void initialize(Type t) {
+        if (t instanceof IntType) {
+            addCommand("ldc 0");
+            addCommand("invokestatic java/lang/Integer/valueOf(I)Ljava/lang/Integer;");
+        } else if (t instanceof BoolType) {
+            addCommand("ldc 0");
+            addCommand("invokestatic java/lang/Boolean/valueOf(Z)Ljava/lang/Boolean;");
+        } /*else if (t instanceof StringType) {
+            addCommand("ldc \"\"");
+        } */ else if (t instanceof StructType || t instanceof FptrType) {
+            addCommand("aconst_null");
+        } else if (t instanceof ListType) {
+            addCommand("new List");
+            addCommand("dup");
+            addCommand("new java/util/ArrayList");
+            addCommand("dup");
+            addCommand("invokespecial java/util/ArrayList/<init>()V");
+            addCommand("dup");
+            initialize(((ListType) t).getType());
+            //addCommand("checkcast java/lang/Object");// not really sure this should be here
+            addCommand("invokevirtual java/util/ArrayList/add(Ljava/lang/Object;)Z");
+            addCommand("pop");
+            addCommand("invokespecial List/<init>(Ljava/util/ArrayList;)V");
+        }
+    }
+
+    private String toPremitive(Type t) {
+        if (t instanceof IntType)
+            return "invokevirtual java/lang/Integer/intValue()I\n";
+        if (t instanceof BoolType)
+            return "invokevirtual java/lang/Boolean/booleanValue()Z\n";
+        return null;
+    }
+
+    private String toNonpremitive(Type t) {
+        if (t instanceof IntType)
+            return "invokestatic java/lang/Integer/valueOf(I)Ljava/lang/Integer;\n";
+        if (t instanceof BoolType)
+            return "invokestatic java/lang/Boolean/valueOf(Z)Ljava/lang/Boolean;\n";
+        return null;
+    }
+
+    private int getLabel() {
+        return ++this.labelNum;
     }
 
     @Override
     public String visit(StructDeclaration structDeclaration) {
         createFile(structDeclaration.getStructName().getName());
-        //todo
+        inStruct = true;
+        String structName = structDeclaration.getStructName().getName();
+
+        addCommand(".class public " + structName + "\n");
+        addCommand(".super java/lang/Object\n");
+
+        addCommand(";this is a default constructor");
+        addCommand(".method public <init>()V");
+        addCommand(".limit locals " + this.stack_size);
+        addCommand(".limit stack " + this.locals_size);
+        addCommand("aload 0");
+        addCommand("invokenonvirtual java/lang/Object/<init>()V");
+
+        /*
+        for (FieldDeclaration f : currentClass.getFields()) {
+            addCommand("aload_0");
+            initialize(f.getVarDeclaration().getType());
+            String className = currentClass.getClassName().getName();
+            String fieldName = f.getVarDeclaration().getVarName().getName();
+            String signiture = makeTypeSignature(f.getVarDeclaration().getType(), false);
+            addCommand("putfield " + className + "/" + fieldName + " " + signiture);
+        }
+         */
+        addCommand("return");
+        addCommand(".end method");
+        addCommand(structDeclaration.getBody().accept(this));
+        inStruct = false;
         return null;
     }
 
@@ -142,65 +259,49 @@ public class CodeGenerator extends Visitor<String> {
         return null;
     }
 
-    public String getArgTypeSymbol(Type t) {
-        if (t instanceof IntType)
-            return "java/lang/Integer;";
-        if (t instanceof BoolType)
-            return "java/lang/Boolean;";
-        if (t instanceof ListType)
-            return "List;";
-        if (t instanceof FptrType)
-            return "Fptr;";
-        if (t instanceof StructType)
-            return "\"" + ((StructType) t).getStructName().getName() + "\";";
-        return null;
-    }
-
     @Override
     public String visit(FunctionDeclaration functionDeclaration) {
         String funcName = functionDeclaration.getFunctionName().getName();
         Type returnType = functionDeclaration.getReturnType();
-        String command = ".method public " + funcName;
-
+        addCommand(".method public " + funcName);
         FunctionSymbolTableItem fsti = getFuncSymbolTableItem(funcName);
+        setCurFunction(fsti);
         ArrayList<Type> argTypes = fsti.getArgTypes();
         StringBuilder argList = new StringBuilder("(");
         for (Type t : argTypes) {
-            argList.append(getArgTypeSymbol(t));
+            argList.append(makeTypeSignature(t, true));
         }
         argList.append(")");
-        argList.append(getArgTypeSymbol(returnType));
-        command += argList.toString() + "\n";
-        command += ".limit stack 140\n";
-        command += ".limit locals 140\n";
-        command += functionDeclaration.getBody().accept(this);
-        command += ".end method\n";
-        return command;
+        argList.append(makeTypeSignature(returnType, true));
+        addCommand(argList.toString());
+        //addCommand(".limit stack " + this.stack_size);
+        //addCommand(".limit locals " + this.locals_size);
+        addCommand(functionDeclaration.getBody().accept(this));
+        addCommand(".end method");
+        return null;
     }
 
     @Override
     public String visit(MainDeclaration mainDeclaration) {
-
-        String code = """
-                .method public static main()
-                  .limit stack 140
-                  .limit locals 140
-                """;
-        code += mainDeclaration.getBody().accept(this);
-
-        code += """
-                  return
-                .end method
-                """;
-
-        return code;
+        addCommand(".class public Main");
+        addCommand(".super java/lang/Object");
+        addCommand(".method public static main([Ljava/lang/String;)V");
+        addCommand(".limit stack " + this.stack_size);
+        addCommand(".limit locals " + this.locals_size);
+        mainDeclaration.getBody().accept(this);
+        addCommand("return");
+        addCommand(".end method");
+        return null;
     }
 
     @Override
-    public String visit(VariableDeclaration variableDeclaration) {
-        //todo
+    public String visit(VariableDeclaration varDeclaration) {        // done
+        initialize(varDeclaration.getVarType());
+        int slot = slotOf(varDeclaration.getVarName().getName());
+        addCommand("astore " + slot);
         return null;
     }
+
 
     @Override
     public String visit(SetGetVarDeclaration setGetVarDeclaration) {
@@ -464,44 +565,94 @@ public class CodeGenerator extends Visitor<String> {
 
     @Override
     public String visit(Identifier identifier) {
-        //todo
-        return null;
+        FunctionSymbolTableItem fsti = getFuncSymbolTableItem(identifier.getName());
+        String command = "";
+        if (fsti == null) { //Not a function name
+            int slot = slotOf(identifier.getName());
+            command = "aload " + slot + "\n";
+        } else { //is a function name
+            command += "new Fptr\n" +
+                    "dup\n" +
+                    "aload_1\n" +
+                    "ldc \"" + identifier.getName() + "\"\n" +
+                    "invokespecial Fptr/<init>(Ljava/lang/Object;Ljava/lang/String;)V\n";
+        }
+        return command;
     }
 
     @Override
     public String visit(ListAccessByIndex listAccessByIndex) {
-        //todo
-        return null;
+        String commandList = listAccessByIndex.getInstance().accept(this);
+        String commandIndex = listAccessByIndex.getIndex().accept(this);
+
+        String command = "";
+        command += commandList;
+        command += commandIndex;
+        command += "invokevirtual java/lang/Integer/intValue()I\n";
+        command += "invokevirtual List/getElement(I)Ljava/lang/Object;\n";
+        command += "checkcast java/lang/Integer\n";
+        return command;
     }
 
     @Override
     public String visit(FunctionCall functionCall) {
-        //todo
+        ArrayList<String> argByteCodes = new ArrayList<>();
+        for (Expression expression : functionCall.getArgs()) {
+            String bc = expression.accept(this);
+            Type type = expression.accept(expressionTypeChecker);
+            if (type instanceof ListType) {
+                bc = "new List\n" +
+                        "dup\n" +
+                        bc +
+                        "invokespecial List/<init>(LList;)V\n";
+            }
+            argByteCodes.add(bc);
+        }
+
+        Expression instance = functionCall.getInstance();
+        FptrType instanceType = (FptrType) instance.accept(expressionTypeChecker);
+        String funcName = instanceType.getClass().getName();
+        System.out.print(funcName);
         return null;
     }
 
     @Override
     public String visit(ListSize listSize) {
-        //todo
-        return null;
+        String commandList = listSize.accept(this);
+        String command = "";
+        command += commandList;
+        command += "invokevirtual List/getSize()I\n";
+        command += "invokestatic java/lang/Integer/valueOf(I)Ljava/lang/Integer;\n";
+        return command;
     }
 
     @Override
     public String visit(ListAppend listAppend) {
-        //todo
-        return null;
+        String command = "";
+        command += listAppend.getListArg().accept(this);
+        command += "dup\n";
+        command += listAppend.getElementArg().accept(this);
+        command += "invokevirtual List/addElement(Ljava/lang/Object;)V\n";
+        return command;
     }
 
     @Override
     public String visit(IntValue intValue) {
-        //todo
-        return null;
+        String command = "";
+        command += "ldc " + String.valueOf(intValue.getConstant()) + "\n";
+        command += "invokestatic java/lang/Integer/valueOf(I)Ljava/lang/Integer;\n";
+        return command;
     }
 
     @Override
     public String visit(BoolValue boolValue) {
-        //todo
-        return null;
+        String command = "";
+        if (boolValue.getConstant())
+            command += "ldc 1\n";
+        else
+            command += "ldc 0\n";
+        command += "invokestatic java/lang/Boolean/valueOf(Z)Ljava/lang/Boolean;\n";
+        return command;
     }
 
     @Override
