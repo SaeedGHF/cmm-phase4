@@ -22,6 +22,11 @@ public class CodeGenerator extends Visitor<String> {
     ExpressionTypeChecker expressionTypeChecker = new ExpressionTypeChecker();
     private String outputPath;
     private FileWriter currentFile;
+    private int labelIndex = 0;
+
+    private int getFresh() {
+        return labelIndex++;
+    }
 
     private void copyFile(String toBeCopied, String toBePasted) {
         try {
@@ -92,25 +97,6 @@ public class CodeGenerator extends Visitor<String> {
         addCommand(command);
     }
 
-    private void addStaticMainMethod() {
-        addCommand(".method public static main([Ljava/lang/String;)V");
-        addCommand(".limit stack 128");
-        addCommand(".limit locals 128");
-        addCommand("new Main");
-        addCommand("invokespecial Main/<init>()V");
-        addCommand("return");
-        addCommand(".end method");
-    }
-
-    public String addMainInstance() {
-        return """
-                new Main
-                dup
-                invokespecial Main/<init>()V
-                astore_1
-                """;
-    }
-
     private int slotOf(String identifier) {
         //todo
         return 0;
@@ -126,19 +112,15 @@ public class CodeGenerator extends Visitor<String> {
 
         createFile("Main");
         addMainDeclaration();
-        //addStaticMainMethod();
-        //addMainInstance();
 
-        String mainDecCode = program.getMain().accept(this);
-        addCommand(mainDecCode);
+        String mainDec = program.getMain().accept(this);
+        addCommand(mainDec);
 
         for (FunctionDeclaration functionDeclaration : program.getFunctions()) {
             functionDeclaration.accept(this);
         }
-
         for (StructDeclaration structDeclaration : program.getStructs()) {
-            String structName = structDeclaration.getStructName().getName();
-            createFile(structName);
+            structDeclaration.accept(this);
         }
         return null;
     }
@@ -255,10 +237,123 @@ public class CodeGenerator extends Visitor<String> {
         return null;
     }
 
+    public String getOperationCommand(BinaryOperator bo) {
+        if (bo.equals(BinaryOperator.add))
+            return "iadd\n";
+        if (bo.equals(BinaryOperator.sub))
+            return "isub\n";
+        if (bo.equals(BinaryOperator.mult))
+            return "imul\n";
+        if (bo.equals(BinaryOperator.div))
+            return "idiv\n";
+        return null;
+    }
+
     @Override
     public String visit(BinaryExpression binaryExpression) {
-        //todo
-        return null;
+        String command = "";
+        String commandLeft = binaryExpression.getFirstOperand().accept(this);
+        String commandRight = binaryExpression.getSecondOperand().accept(this);
+        Type tl = binaryExpression.getFirstOperand().accept(expressionTypeChecker);
+        Type tr = binaryExpression.getSecondOperand().accept(expressionTypeChecker);
+        BinaryOperator operator = binaryExpression.getBinaryOperator();
+        if (operator.equals(BinaryOperator.add) ||
+                operator.equals(BinaryOperator.sub) ||
+                operator.equals(BinaryOperator.mult) ||
+                operator.equals(BinaryOperator.div)) {
+            command += commandLeft;
+            command += "invokevirtual java/lang/Integer/intValue()I\n";
+            command += commandRight;
+            command += "invokevirtual java/lang/Integer/intValue()I\n";
+            command += getOperationCommand(operator);
+            command += "invokestatic java/lang/Integer/valueOf(I)Ljava/lang/Integer;\n";
+        }
+
+        if (operator.equals(BinaryOperator.and) || operator.equals(BinaryOperator.or)) {
+            String elseLabel = "Label" + getFresh();
+            String afterLabel = "Label" + getFresh();
+
+            command += commandLeft;
+            command += "invokevirtual java/lang/Boolean/booleanValue()Z\n";
+
+            if (operator.equals(BinaryOperator.and))
+                command += "ifeq " + elseLabel + "\n";
+            else
+                command += "ifne " + elseLabel + "\n";
+
+            command += commandRight;
+            command += "invokevirtual java/lang/Boolean/booleanValue()Z\n";
+            command += "goto " + afterLabel + "\n";
+            command += elseLabel + ":\n";
+
+            command += "iconst_" + (operator.equals(BinaryOperator.or) ? "1" : "0") + "\n";
+
+            command += afterLabel + ":\n";
+            command += "invokestatic java/lang/Boolean/valueOf(Z)Ljava/lang/Boolean;\n";
+        }
+
+        if (operator.equals(BinaryOperator.lt) || operator.equals(BinaryOperator.gt)) {
+            String elseLabel = "Label" + getFresh();
+            String afterLabel = "Label" + getFresh();
+            String ifCommand = "";
+
+
+            command += commandLeft;
+            command += "invokevirtual java/lang/Integer/intValue()I\n";
+            command += commandRight;
+            command += "invokevirtual java/lang/Integer/intValue()I\n";
+
+            if (operator.equals(BinaryOperator.lt))
+                ifCommand = "if_icmpge";
+            else
+                ifCommand = "if_icmple";
+
+
+            command += ifCommand + " " + elseLabel + "\n";
+            command += "iconst_1\n";
+            command += "goto " + afterLabel + "\n";
+            command += elseLabel + ":\n";
+            command += "iconst_0\n";
+            command += afterLabel + ":\n";
+            command += "invokestatic java/lang/Boolean/valueOf(Z)Ljava/lang/Boolean;\n";
+        }
+
+        if (operator.equals(BinaryOperator.eq)) {
+            String elseLabel = "Label" + getFresh();
+            String afterLabel = "Label" + getFresh();
+            String ifCommand = "";
+
+            if (tl instanceof IntType) {
+                command += commandLeft;
+                command += "invokevirtual java/lang/Integer/intValue()I\n";
+                command += commandRight;
+                command += "invokevirtual java/lang/Integer/intValue()I\n";
+                ifCommand = "if_icmpne";
+            }
+
+            if (tl instanceof BoolType) {
+                command += commandLeft;
+                command += "invokevirtual java/lang/Boolean/booleanValue()Z\n";
+                command += commandRight;
+                command += "invokevirtual java/lang/Boolean/booleanValue()Z\n";
+                ifCommand = "if_icmpne";
+            }
+
+            if (tl instanceof ListType || tl instanceof FptrType) {
+                command += commandLeft;
+                command += commandRight;
+                ifCommand = "if_acmpne";
+            }
+
+            command += ifCommand + " " + elseLabel + "\n";
+            command += "iconst_1\n";
+            command += "goto " + afterLabel + "\n";
+            command += elseLabel + ":\n";
+            command += "iconst_0\n";
+            command += afterLabel + ":\n";
+            command += "invokestatic java/lang/Boolean/valueOf(Z)Ljava/lang/Boolean;\n";
+        }
+        return command;
     }
 
     @Override
