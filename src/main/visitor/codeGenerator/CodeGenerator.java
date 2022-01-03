@@ -12,10 +12,12 @@ import main.ast.types.*;
 import main.ast.types.primitives.*;
 import main.symbolTable.*;
 import main.symbolTable.exceptions.*;
+import main.symbolTable.items.FunctionSymbolTableItem;
 import main.visitor.Visitor;
 import main.visitor.type.ExpressionTypeChecker;
 
 import java.io.*;
+import java.lang.reflect.Array;
 import java.util.*;
 
 public class CodeGenerator extends Visitor<String> {
@@ -132,10 +134,47 @@ public class CodeGenerator extends Visitor<String> {
         return null;
     }
 
+    public FunctionSymbolTableItem getFuncSymbolTableItem(String key) {
+        try {
+            return (FunctionSymbolTableItem) SymbolTable.root.getItem(FunctionSymbolTableItem.START_KEY + key);
+        } catch (ItemNotFoundException ignored) {
+        }
+        return null;
+    }
+
+    public String getArgTypeSymbol(Type t) {
+        if (t instanceof IntType)
+            return "Ljava/lang/Integer;";
+        if (t instanceof BoolType)
+            return "Ljava/lang/Boolean;";
+        if (t instanceof ListType)
+            return "LList;";
+        if (t instanceof FptrType)
+            return "LFptr;";
+        if (t instanceof VoidType)
+            return "V";
+        return null;
+    }
+
     @Override
     public String visit(FunctionDeclaration functionDeclaration) {
-        //todo
-        return null;
+        String funcName = functionDeclaration.getFunctionName().getName();
+        Type returnType = functionDeclaration.getReturnType();
+        String command = ".method public " + funcName;
+        FunctionSymbolTableItem fsti = getFuncSymbolTableItem(funcName);
+        ArrayList<Type> argTypes = fsti.getArgTypes();
+        StringBuilder argList = new StringBuilder("(");
+        for (Type t : argTypes) {
+            argList.append(getArgTypeSymbol(t));
+        }
+        argList.append(")");
+        argList.append(getArgTypeSymbol(returnType));
+        command += argList.toString() + "\n";
+        command += ".limit stack 140\n";
+        command += ".limit locals 140\n";
+        command += functionDeclaration.getBody().accept(this);
+        command += ".end method\n";
+        return command;
     }
 
     @Override
@@ -358,7 +397,29 @@ public class CodeGenerator extends Visitor<String> {
 
     @Override
     public String visit(UnaryExpression unaryExpression) {
-        return null;
+        unaryExpression.getOperand().accept(this);
+        String operand = unaryExpression.getOperand().accept(this);
+        String command = "";
+        if (unaryExpression.getOperator().equals(UnaryOperator.not)) { //x xor 1 and 1 = not(x)
+            command += operand;
+            command += "invokevirtual java/lang/Boolean/booleanValue()Z\n";
+
+            String elseLabel = "Label" + getFresh();
+            String afterLabel = "Label" + getFresh();
+
+            command += "ldc 1\n";
+            command += "ixor\n";
+            command += "ldc 1\n";
+            command += "iand\n";
+            command += "invokestatic java/lang/Boolean/valueOf(Z)Ljava/lang/Boolean;\n";
+        }
+        if (unaryExpression.getOperator().equals(UnaryOperator.minus)) {
+            command += operand;
+            command += "invokevirtual java/lang/Integer/intValue()I\n";
+            command += "ineg\n";
+            command += "invokestatic java/lang/Integer/valueOf(I)Ljava/lang/Integer;\n";
+        }
+        return command;
     }
 
     @Override
