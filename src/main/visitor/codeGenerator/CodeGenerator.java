@@ -144,15 +144,15 @@ public class CodeGenerator extends Visitor<String> {
 
     public String getArgTypeSymbol(Type t) {
         if (t instanceof IntType)
-            return "Ljava/lang/Integer;";
+            return "java/lang/Integer;";
         if (t instanceof BoolType)
-            return "Ljava/lang/Boolean;";
+            return "java/lang/Boolean;";
         if (t instanceof ListType)
-            return "LList;";
+            return "List;";
         if (t instanceof FptrType)
-            return "LFptr;";
-        if (t instanceof VoidType)
-            return "V";
+            return "Fptr;";
+        if (t instanceof StructType)
+            return "\"" + ((StructType) t).getStructName().getName() + "\";";
         return null;
     }
 
@@ -161,6 +161,7 @@ public class CodeGenerator extends Visitor<String> {
         String funcName = functionDeclaration.getFunctionName().getName();
         Type returnType = functionDeclaration.getReturnType();
         String command = ".method public " + funcName;
+
         FunctionSymbolTableItem fsti = getFuncSymbolTableItem(funcName);
         ArrayList<Type> argTypes = fsti.getArgTypes();
         StringBuilder argList = new StringBuilder("(");
@@ -181,12 +182,11 @@ public class CodeGenerator extends Visitor<String> {
     public String visit(MainDeclaration mainDeclaration) {
 
         String code = """
-                .method public static main([Ljava/lang/String;)V
+                .method public static main()
                   .limit stack 140
                   .limit locals 140
                 """;
-        //code += addMainInstance();
-        //code += mainDeclaration.getBody().accept(this);
+        code += mainDeclaration.getBody().accept(this);
 
         code += """
                   return
@@ -215,20 +215,48 @@ public class CodeGenerator extends Visitor<String> {
 
     @Override
     public String visit(BlockStmt blockStmt) {
-        //todo
-        return null;
+        StringBuilder command = new StringBuilder();
+        for (Statement stmt : blockStmt.getStatements())
+            command.append(stmt.accept(this)).append('\n');
+        return command.toString();
+    }
+
+    public String dummyInstruction() {
+        return """
+                iconst_0
+                pop
+                """;
     }
 
     @Override
     public String visit(ConditionalStmt conditionalStmt) {
-        //todo
-        return null;
+        String elseLabel = "Label" + getFresh();
+        String afterLabel = "Label" + getFresh();
+        String command = "";
+        command += conditionalStmt.getCondition().accept(this);
+        command += "invokevirtual java/lang/Boolean/booleanValue()Z\n";
+        command += "ifeq " + elseLabel + "\n";
+        command += conditionalStmt.getThenBody().accept(this);
+        command += "goto " + afterLabel + "\n";
+        command += elseLabel + ":\n";
+        command += dummyInstruction();
+        if (conditionalStmt.getElseBody() != null)
+            command += conditionalStmt.getElseBody().accept(this);
+        command += afterLabel + ":\n";
+        command += dummyInstruction();
+        return command;
     }
 
     @Override
     public String visit(FunctionCallStmt functionCallStmt) {
-        //todo
-        return null;
+        String command = "";
+        expressionTypeChecker.setInFunctionCallStmt(true);
+        command += functionCallStmt.getFunctionCall().accept(this);
+        Type t = functionCallStmt.getFunctionCall().accept(expressionTypeChecker);
+        if (!(t instanceof VoidType))
+            command += "pop\n";
+        expressionTypeChecker.setInFunctionCallStmt(false);
+        return command;
     }
 
     @Override
@@ -248,8 +276,14 @@ public class CodeGenerator extends Visitor<String> {
 
     @Override
     public String visit(ReturnStmt returnStmt) {
-        //todo
-        return null;
+        String command = "";
+        command += returnStmt.getReturnedExpr().accept(this);
+        Type returnType = returnStmt.getReturnedExpr().accept(expressionTypeChecker);
+        if (returnType instanceof VoidType)
+            command += "return\n";
+        else
+            command += "areturn\n";
+        return command;
     }
 
     @Override

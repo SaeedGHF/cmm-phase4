@@ -1,15 +1,38 @@
 .class public Main
 		.super java/lang/Object
-.method public static main([Ljava/lang/String;)V
+.method public static main()
 		  .limit stack 140
 		  .limit locals 140
+		null
+		null
+		null
+		null
+		null
+		null
+		null
+		null
+		null
+		null
+		null
+		null
 		  return
 		.end method
-.method public createOrder(nullLjava/lang/Integer;)null
+.method public createOrder("ProductCatalog";java/lang/Integer;)"Order";
 		.limit stack 140
 		.limit locals 140
-		null.end method
-.method public getSum(LList;)Ljava/lang/Integer;
+		null
+		null
+		null
+		nullareturn
+		
+		.end method
+.method public getSum(List;)java/lang/Integer;
 		.limit stack 140
 		.limit locals 140
-		null.end method
+		null
+		null
+		null
+		null
+		nullareturn
+		
+		.end method
