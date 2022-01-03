@@ -2,6 +2,7 @@ package main;
 
 import main.visitor.*;
 import main.visitor.codeGenerator.CodeGenerator;
+import main.visitor.codeGenerator.CodeGeneratorOld;
 import main.visitor.name.*;
 import main.visitor.type.*;
 import parsers.*;
@@ -9,7 +10,6 @@ import main.ast.nodes.Program;
 import org.antlr.v4.runtime.*;
 
 import java.io.*;
-import java.util.*;
 
 public class CmmCompiler {
     public void compile(CharStream textStream) {
@@ -24,14 +24,14 @@ public class CmmCompiler {
         program.accept(nameAnalyser);
 
         int numberOfErrors = program.accept(errorReporter);
-        if(numberOfErrors > 0)
+        if (numberOfErrors > 0)
             System.exit(1);
 
         TypeChecker typeChecker = new TypeChecker();
         program.accept(typeChecker);
 
         numberOfErrors = program.accept(errorReporter);
-        if(numberOfErrors > 0)
+        if (numberOfErrors > 0)
             System.exit(1);
 
         CodeGenerator codeGenerator = new CodeGenerator();

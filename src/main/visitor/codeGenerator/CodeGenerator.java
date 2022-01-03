@@ -14,10 +14,11 @@ import main.symbolTable.*;
 import main.symbolTable.exceptions.*;
 import main.visitor.Visitor;
 import main.visitor.type.ExpressionTypeChecker;
+
 import java.io.*;
 import java.util.*;
 
-public class  CodeGenerator extends Visitor<String> {
+public class CodeGenerator extends Visitor<String> {
     ExpressionTypeChecker expressionTypeChecker = new ExpressionTypeChecker();
     private String outputPath;
     private FileWriter currentFile;
@@ -43,15 +44,14 @@ public class  CodeGenerator extends Visitor<String> {
         String jasminPath = "utilities/jarFiles/jasmin.jar";
         String listClassPath = "utilities/codeGenerationUtilityClasses/List.j";
         String fptrClassPath = "utilities/codeGenerationUtilityClasses/Fptr.j";
-        try{
+        try {
             File directory = new File(this.outputPath);
             File[] files = directory.listFiles();
-            if(files != null)
+            if (files != null)
                 for (File file : files)
                     file.delete();
             directory.mkdir();
-        }
-        catch(SecurityException e) {//unreachable
+        } catch (SecurityException e) {//unreachable
 
         }
         copyFile(jasminPath, this.outputPath + "jasmin.jar");
@@ -72,9 +72,9 @@ public class  CodeGenerator extends Visitor<String> {
     private void addCommand(String command) {
         try {
             command = String.join("\n\t\t", command.split("\n"));
-            if(command.startsWith("Label_"))
+            if (command.startsWith("Label_"))
                 this.currentFile.write("\t" + command + "\n");
-            else if(command.startsWith("."))
+            else if (command.startsWith("."))
                 this.currentFile.write(command + "\n");
             else
                 this.currentFile.write("\t\t" + command + "\n");
@@ -82,6 +82,14 @@ public class  CodeGenerator extends Visitor<String> {
         } catch (IOException e) {//unreachable
 
         }
+    }
+
+    private void addMainDeclaration() {
+        String command = """
+                .class public Main
+                .super java/lang/Object
+                """;
+        addCommand(command);
     }
 
     private void addStaticMainMethod() {
@@ -103,15 +111,17 @@ public class  CodeGenerator extends Visitor<String> {
     public String visit(Program program) {
         prepareOutputFolder();
 
-        for(StructDeclaration structDeclaration : program.getStructs()){
+        for (StructDeclaration structDeclaration : program.getStructs()) {
             structDeclaration.accept(this);
         }
 
         createFile("Main");
+        addMainDeclaration();
+        addStaticMainMethod();
 
         program.getMain().accept(this);
 
-        for (FunctionDeclaration functionDeclaration: program.getFunctions()){
+        for (FunctionDeclaration functionDeclaration : program.getFunctions()) {
             functionDeclaration.accept(this);
         }
         return null;
@@ -223,36 +233,36 @@ public class  CodeGenerator extends Visitor<String> {
     }
 
     @Override
-    public String visit(UnaryExpression unaryExpression){
+    public String visit(UnaryExpression unaryExpression) {
         return null;
     }
 
     @Override
-    public String visit(StructAccess structAccess){
+    public String visit(StructAccess structAccess) {
         //todo
         return null;
     }
 
     @Override
-    public String visit(Identifier identifier){
+    public String visit(Identifier identifier) {
         //todo
         return null;
     }
 
     @Override
-    public String visit(ListAccessByIndex listAccessByIndex){
+    public String visit(ListAccessByIndex listAccessByIndex) {
         //todo
         return null;
     }
 
     @Override
-    public String visit(FunctionCall functionCall){
+    public String visit(FunctionCall functionCall) {
         //todo
         return null;
     }
 
     @Override
-    public String visit(ListSize listSize){
+    public String visit(ListSize listSize) {
         //todo
         return null;
     }
