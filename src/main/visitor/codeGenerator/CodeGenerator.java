@@ -1,69 +1,44 @@
 package main.visitor.codeGenerator;
 
-import main.ast.nodes.*;
 import main.ast.nodes.declaration.*;
 import main.ast.nodes.declaration.struct.*;
 import main.ast.nodes.expression.*;
 import main.ast.nodes.expression.operators.*;
-import main.ast.nodes.expression.values.*;
 import main.ast.nodes.expression.values.primitive.*;
 import main.ast.nodes.statement.*;
 import main.ast.types.*;
 import main.ast.types.primitives.*;
-import main.symbolTable.*;
 import main.symbolTable.exceptions.*;
-import main.symbolTable.items.FunctionSymbolTableItem;
-import main.symbolTable.items.StructSymbolTableItem;
 import main.visitor.Visitor;
 import main.visitor.type.ExpressionTypeChecker;
 
 import java.io.*;
-import java.lang.reflect.Array;
 import java.util.*;
 
+import main.ast.nodes.Program;
+import main.ast.nodes.expression.Identifier;
+import main.ast.nodes.expression.operators.BinaryOperator;
+import main.symbolTable.SymbolTable;
+import main.symbolTable.items.*;
+
 public class CodeGenerator extends Visitor<String> {
-    ExpressionTypeChecker expressionTypeChecker;
+    ExpressionTypeChecker expressionTypeChecker = new ExpressionTypeChecker();
     private String outputPath;
     private FileWriter currentFile;
-    private int labelIndex = 0;
-    private boolean inStruct = false;
-    private FunctionSymbolTableItem curFunction;
+    private int numOfUsedLabel;
+    private FunctionDeclaration currFunc;
+    private int numOfUsedTemp;
 
-    private StructDeclaration currentStruct;
-    private FunctionDeclaration currentFunction;
-    private int lastTempValue;
-    private String stack_size;
-    private String locals_size;
-    private int labelNum = 0;
-    private ArrayList<String> breaks;
-    private ArrayList<String> continues;
-    private ArrayList<Integer> temp_vars;
+    private StructDeclaration currStruct;
+    private ArrayList<String> scopeVars = new ArrayList<>();
 
-    public CodeGenerator() {
-        this.expressionTypeChecker = new ExpressionTypeChecker();
-        this.prepareOutputFolder();
-        this.lastTempValue = 0;
-        this.stack_size = "128";
-        this.locals_size = "128";
-        this.breaks = new ArrayList<>();
-        this.continues = new ArrayList<>();
-        this.temp_vars = new ArrayList<>();
-    }
-
-    public void setCurFunction(FunctionSymbolTableItem curFunction) {
-        this.curFunction = curFunction;
-    }
-
-    public FunctionSymbolTableItem getCurFunction() {
-        return this.curFunction;
-    }
-
-    private int getFresh() {
-        return labelIndex++;
-    }
+    private String stackLimit = "128";
+    private String localLimit = "128";
 
     private void copyFile(String toBeCopied, String toBePasted) {
         try {
+            this.numOfUsedLabel = 0;
+            this.numOfUsedTemp = 0;
             File readingFile = new File(toBeCopied);
             File writingFile = new File(toBePasted);
             InputStream readingFileStream = new FileInputStream(readingFile);
@@ -123,185 +98,168 @@ public class CodeGenerator extends Visitor<String> {
         }
     }
 
-
-    private int slotOf(String identifier) {
-        int cnt = 1;
-        for (VariableDeclaration arg : curFunction.getFunctionDeclaration().getArgs()) {
-            if (arg.getVarName().getName().equals(identifier))
-                return cnt;
-            cnt++;
-        }
-        return cnt;
+    private void addStaticMainMethod() {
+        addCommand(".method public static main([Ljava/lang/String;)V");
+        addCommand(".limit stack " + stackLimit);
+        addCommand(".limit locals " + localLimit);
+        addCommand("new Main");
+        addCommand("invokespecial Main/<init>()V");
+        addCommand("return");
+        addCommand(".end method");
     }
 
-    @Override
-    public String visit(Program program) {
-        //prepareOutputFolder();
-        for (StructDeclaration structDeclaration : program.getStructs()) {
-            structDeclaration.accept(this);
-        }
-        createFile("Main");
-        program.getMain().accept(this);
-        for (FunctionDeclaration functionDeclaration : program.getFunctions()) {
-            functionDeclaration.accept(this);
-        }
-        return null;
+    private String getFreshLabel() {
+        String label = "Label_";
+        label += numOfUsedLabel;
+        numOfUsedLabel++;
+        return label;
     }
 
-    private String makeTypeSignature(Type t, boolean premitive) {
-        if (t instanceof IntType) {
-            if (premitive)
-                return "I";
-            else
-                return "Ljava/lang/Integer;";
-        }
-        if (t instanceof BoolType) {
-            if (premitive)
-                return "Z";
-            else
-                return "Ljava/lang/Boolean;";
-        }
-        if (t instanceof StructType)
-            return "L" + ((StructType) t).getStructName().getName() + ";";
+    private String makeTypeSignature(Type t) {
+        if (t instanceof IntType)
+            return "java/lang/Integer";
+        if (t instanceof BoolType)
+            return "java/lang/Boolean";
         if (t instanceof ListType)
-            return "LList;";
+            return "List";
         if (t instanceof FptrType)
-            return "LFptr;";
+            return "Fptr";
+        if (t instanceof StructType)
+            return ((StructType) t).getStructName().getName();
         if (t instanceof VoidType)
             return "V";
         return null;
     }
 
-    private void initialize(Type t) {
-        if (t instanceof IntType) {
-            addCommand("ldc 0");
-            addCommand("invokestatic java/lang/Integer/valueOf(I)Ljava/lang/Integer;");
-        } else if (t instanceof BoolType) {
-            addCommand("ldc 0");
-            addCommand("invokestatic java/lang/Boolean/valueOf(Z)Ljava/lang/Boolean;");
-        } /*else if (t instanceof StringType) {
-            addCommand("ldc \"\"");
-        } */ else if (t instanceof StructType || t instanceof FptrType) {
-            addCommand("aconst_null");
-        } else if (t instanceof ListType) {
-            addCommand("new List");
-            addCommand("dup");
-            addCommand("new java/util/ArrayList");
-            addCommand("dup");
-            addCommand("invokespecial java/util/ArrayList/<init>()V");
-            addCommand("dup");
-            initialize(((ListType) t).getType());
-            //addCommand("checkcast java/lang/Object");// not really sure this should be here
-            addCommand("invokevirtual java/util/ArrayList/add(Ljava/lang/Object;)Z");
-            addCommand("pop");
-            addCommand("invokespecial List/<init>(Ljava/util/ArrayList;)V");
+    private int slotOf(String identifier) {
+        if (identifier.equals("")) {
+            int temp = numOfUsedTemp;
+            numOfUsedTemp++;
+            return scopeVars.size() - 1 + temp;
         }
+        if (scopeVars.contains(identifier))
+            return scopeVars.indexOf(identifier);
+        return 0;
     }
 
-    private String toPremitive(Type t) {
-        if (t instanceof IntType)
-            return "invokevirtual java/lang/Integer/intValue()I\n";
-        if (t instanceof BoolType)
-            return "invokevirtual java/lang/Boolean/booleanValue()Z\n";
+
+    @Override
+    public String visit(Program program) {
+        prepareOutputFolder();
+        for (StructDeclaration structDeclaration : program.getStructs()) {
+            structDeclaration.accept(this);
+        }
+        for (FunctionDeclaration functionDeclaration : program.getFunctions()) {
+            functionDeclaration.accept(this);
+        }
+        createFile("Main");
+        program.getMain().accept(this);
         return null;
-    }
-
-    private String toNonpremitive(Type t) {
-        if (t instanceof IntType)
-            return "invokestatic java/lang/Integer/valueOf(I)Ljava/lang/Integer;\n";
-        if (t instanceof BoolType)
-            return "invokestatic java/lang/Boolean/valueOf(Z)Ljava/lang/Boolean;\n";
-        return null;
-    }
-
-    private int getLabel() {
-        return ++this.labelNum;
     }
 
     @Override
     public String visit(StructDeclaration structDeclaration) {
-        createFile(structDeclaration.getStructName().getName());
-        inStruct = true;
-        String structName = structDeclaration.getStructName().getName();
-
-        addCommand(".class public " + structName + "\n");
-        addCommand(".super java/lang/Object\n");
-
-        addCommand(";this is a default constructor");
-        addCommand(".method public <init>()V");
-        addCommand(".limit locals " + this.stack_size);
-        addCommand(".limit stack " + this.locals_size);
-        addCommand("aload 0");
-        addCommand("invokenonvirtual java/lang/Object/<init>()V");
-
-        /*
-        for (FieldDeclaration f : currentClass.getFields()) {
-            addCommand("aload_0");
-            initialize(f.getVarDeclaration().getType());
-            String className = currentClass.getClassName().getName();
-            String fieldName = f.getVarDeclaration().getVarName().getName();
-            String signiture = makeTypeSignature(f.getVarDeclaration().getType(), false);
-            addCommand("putfield " + className + "/" + fieldName + " " + signiture);
+        try {
+            String structKey = StructSymbolTableItem.START_KEY + structDeclaration.getStructName().getName();
+            StructSymbolTableItem structSymbolTableItem = (StructSymbolTableItem) SymbolTable.root.getItem(structKey);
+            SymbolTable.push(structSymbolTableItem.getStructSymbolTable());
+        } catch (ItemNotFoundException e) {//unreachable
         }
-         */
+        createFile(structDeclaration.getStructName().getName());
+        addCommand(".class public " + structDeclaration.getStructName().getName());
+        addCommand(".super java/lang/Object");
+        scopeVars.add(structDeclaration.getStructName().getName());
+        addDefaultConstructor();
+        structDeclaration.getBody().accept(this);
         addCommand("return");
         addCommand(".end method");
-        addCommand(structDeclaration.getBody().accept(this));
-        inStruct = false;
-        return null;
-    }
-
-    public FunctionSymbolTableItem getFuncSymbolTableItem(String key) {
-        try {
-            return (FunctionSymbolTableItem) SymbolTable.root.getItem(FunctionSymbolTableItem.START_KEY + key);
-        } catch (ItemNotFoundException ignored) {
-        }
+        SymbolTable.pop();
+        scopeVars.clear();
         return null;
     }
 
     @Override
     public String visit(FunctionDeclaration functionDeclaration) {
-        String funcName = functionDeclaration.getFunctionName().getName();
-        Type returnType = functionDeclaration.getReturnType();
-        addCommand(".method public " + funcName);
-        FunctionSymbolTableItem fsti = getFuncSymbolTableItem(funcName);
-        setCurFunction(fsti);
-        ArrayList<Type> argTypes = fsti.getArgTypes();
-        StringBuilder argList = new StringBuilder("(");
-        for (Type t : argTypes) {
-            argList.append(makeTypeSignature(t, true));
+        try {
+            String functionKey = FunctionSymbolTableItem.START_KEY + functionDeclaration.getFunctionName().getName();
+            FunctionSymbolTableItem functionSymbolTableItem = (FunctionSymbolTableItem) SymbolTable.root.getItem(functionKey);
+            SymbolTable.push(functionSymbolTableItem.getFunctionSymbolTable());
+        } catch (ItemNotFoundException e) {//unreachable
         }
-        argList.append(")");
-        argList.append(makeTypeSignature(returnType, true));
-        addCommand(argList.toString());
-        //addCommand(".limit stack " + this.stack_size);
-        //addCommand(".limit locals " + this.locals_size);
-        addCommand(functionDeclaration.getBody().accept(this));
+        StringBuilder command = new StringBuilder(".method public " + functionDeclaration.getFunctionName().getName() + "(");
+        scopeVars.add(functionDeclaration.getFunctionName().getName());
+        for (VariableDeclaration variableDeclaration : functionDeclaration.getArgs()) {
+            String type = makeTypeSignature(variableDeclaration.getVarType());
+            command.append(type).append(";");
+            scopeVars.add(variableDeclaration.getVarName().getName());
+        }
+        command.append(")");
+        String returnType = makeTypeSignature(functionDeclaration.getReturnType());
+        command.append(returnType);
+        addCommand(command.toString());
+        functionDeclaration.getBody().accept(this);
         addCommand(".end method");
+        scopeVars.clear();
+        SymbolTable.pop();
         return null;
+    }
+
+    public void addDefaultConstructor() {
+        addCommand(".method public <init>()V");
+        addCommand(".limit stack " + stackLimit);
+        addCommand(".limit locals " + localLimit);
+        addCommand("aload_0");
+        addCommand("invokespecial java/lang/Object/<init>()V");
     }
 
     @Override
     public String visit(MainDeclaration mainDeclaration) {
+        FunctionSymbolTableItem mainFunc = null;
+        try {
+            String functionKey = FunctionSymbolTableItem.START_KEY + "main";
+            mainFunc = (FunctionSymbolTableItem) SymbolTable.root.getItem(functionKey);
+            SymbolTable.push(mainFunc.getFunctionSymbolTable());
+        } catch (ItemNotFoundException e) {//unreachable
+        }
         addCommand(".class public Main");
         addCommand(".super java/lang/Object");
-        addCommand(".method public static main([Ljava/lang/String;)V");
-        addCommand(".limit stack " + this.stack_size);
-        addCommand(".limit locals " + this.locals_size);
+        addStaticMainMethod();
+        addDefaultConstructor();
         mainDeclaration.getBody().accept(this);
         addCommand("return");
         addCommand(".end method");
+        scopeVars.clear();
+        SymbolTable.pop();
         return null;
     }
 
     @Override
-    public String visit(VariableDeclaration varDeclaration) {        // done
-        initialize(varDeclaration.getVarType());
-        int slot = slotOf(varDeclaration.getVarName().getName());
-        addCommand("astore " + slot);
+    public String visit(VariableDeclaration variableDeclaration) {
+        scopeVars.add(variableDeclaration.getVarName().getName());
+        if (variableDeclaration.getDefaultValue() != null)
+            addCommand(variableDeclaration.getDefaultValue().accept(this));
+        if (variableDeclaration.getVarType() instanceof IntType ||
+                variableDeclaration.getVarType() instanceof BoolType)
+            addCommand("iconst_0");
+        else if (variableDeclaration.getVarType() instanceof FptrType)
+            addCommand("aconst_null");
+        else if (variableDeclaration.getVarType() instanceof StructType)
+            addCommand("new " + ((StructType) variableDeclaration.getVarType()).getStructName().getName());
+        else if (variableDeclaration.getVarType() instanceof ListType)
+            addCommand("new List");
+        if (variableDeclaration.getVarType() instanceof IntType ||
+                variableDeclaration.getVarType() instanceof BoolType) {
+            addCommand("istore" + getSlot(variableDeclaration.getVarName().getName()));
+        } else {
+            addCommand("astore" + getSlot(variableDeclaration.getVarName().getName()));
+        }
         return null;
     }
 
+    private String getSlot(String identifier) {
+        int slot = slotOf(identifier);
+        return slot <= 3 ? "_" + slot : " " + slot;
+    }
 
     @Override
     public String visit(SetGetVarDeclaration setGetVarDeclaration) {
@@ -310,54 +268,45 @@ public class CodeGenerator extends Visitor<String> {
 
     @Override
     public String visit(AssignmentStmt assignmentStmt) {
-        //todo
+        BinaryExpression assignExpr = new BinaryExpression(
+                assignmentStmt.getLValue(),
+                assignmentStmt.getRValue(),
+                BinaryOperator.assign);
+        addCommand(assignExpr.accept(this));
+        //addCommand("pop");
         return null;
     }
 
     @Override
     public String visit(BlockStmt blockStmt) {
-        StringBuilder command = new StringBuilder();
-        for (Statement stmt : blockStmt.getStatements())
-            command.append(stmt.accept(this)).append('\n');
-        return command.toString();
-    }
-
-    public String dummyInstruction() {
-        return """
-                iconst_0
-                pop
-                """;
+        for (Statement statement : blockStmt.getStatements()) {
+            statement.accept(this);
+        }
+        return null;
     }
 
     @Override
     public String visit(ConditionalStmt conditionalStmt) {
-        String elseLabel = "Label" + getFresh();
-        String afterLabel = "Label" + getFresh();
-        String command = "";
-        command += conditionalStmt.getCondition().accept(this);
-        command += "invokevirtual java/lang/Boolean/booleanValue()Z\n";
-        command += "ifeq " + elseLabel + "\n";
-        command += conditionalStmt.getThenBody().accept(this);
-        command += "goto " + afterLabel + "\n";
-        command += elseLabel + ":\n";
-        command += dummyInstruction();
+        String labelFalse = getFreshLabel();
+        String labelAfter = getFreshLabel();
+        addCommand(conditionalStmt.getCondition().accept(this));
+        addCommand("ifeq " + labelFalse);
+        conditionalStmt.getThenBody().accept(this);
+        addCommand("goto " + labelAfter);
+        addCommand(labelFalse + ":");
         if (conditionalStmt.getElseBody() != null)
-            command += conditionalStmt.getElseBody().accept(this);
-        command += afterLabel + ":\n";
-        command += dummyInstruction();
-        return command;
+            conditionalStmt.getElseBody().accept(this);
+        addCommand(labelAfter + ":");
+        return null;
     }
 
     @Override
     public String visit(FunctionCallStmt functionCallStmt) {
-        String command = "";
         expressionTypeChecker.setInFunctionCallStmt(true);
-        command += functionCallStmt.getFunctionCall().accept(this);
-        Type t = functionCallStmt.getFunctionCall().accept(expressionTypeChecker);
-        if (!(t instanceof VoidType))
-            command += "pop\n";
+        addCommand(functionCallStmt.getFunctionCall().accept(this));
+        addCommand("pop");
         expressionTypeChecker.setInFunctionCallStmt(false);
-        return command;
+        return null;
     }
 
     @Override
@@ -377,37 +326,58 @@ public class CodeGenerator extends Visitor<String> {
 
     @Override
     public String visit(ReturnStmt returnStmt) {
-        String command = "";
-        command += returnStmt.getReturnedExpr().accept(this);
-        Type returnType = returnStmt.getReturnedExpr().accept(expressionTypeChecker);
-        if (returnType instanceof VoidType)
-            command += "return\n";
-        else
-            command += "areturn\n";
-        return command;
-    }
-
-    @Override
-    public String visit(LoopStmt loopStmt) {
-        //todo
+        Type type = returnStmt.getReturnedExpr().accept(expressionTypeChecker);
+        if (type instanceof VoidType) {
+            addCommand("return");
+        } else {
+            addCommand(returnStmt.getReturnedExpr().accept(this));
+            if (type instanceof IntType)
+                addCommand("invokestatic java/lang/Integer/valueOf(I)Ljava/lang/Integer;");
+            if (type instanceof BoolType)
+                addCommand("invokestatic java/lang/Boolean/valueOf(Z)Ljava/lang/Boolean;");
+            addCommand("areturn");
+        }
         return null;
     }
 
     @Override
+    public String visit(LoopStmt loopStmt) {
+        loopStmt.getCondition().accept(this);
+        int index = loopStmt.getLine();
+        addCommand("istore " + index);
+        int uniqueLabel = numOfUsedLabel++;
+        addCommand("goto check" + uniqueLabel);
+        addCommand("begin" + uniqueLabel + ":");
+        loopStmt.getBody().accept(this);
+        addCommand("iinc " + index + " -1");
+        addCommand("check" + uniqueLabel + ":");
+        addCommand("iload " + index);
+        addCommand("ifgt begin" + uniqueLabel);
+        return null;
+
+    }
+
+    @Override
     public String visit(VarDecStmt varDecStmt) {
-        //todo
+        for (VariableDeclaration variableDeclaration : varDecStmt.getVars()) {
+            variableDeclaration.accept(this);
+        }
         return null;
     }
 
     @Override
     public String visit(ListAppendStmt listAppendStmt) {
-        //todo
+        expressionTypeChecker.setInFunctionCallStmt(true);
+        addCommand(listAppendStmt.getListAppendExpr().accept(this));
+        expressionTypeChecker.setInFunctionCallStmt(false);
         return null;
     }
 
     @Override
     public String visit(ListSizeStmt listSizeStmt) {
-        //todo
+        expressionTypeChecker.setInFunctionCallStmt(true);
+        addCommand(listSizeStmt.getListSizeExpr().accept(this));
+        expressionTypeChecker.setInFunctionCallStmt(false);
         return null;
     }
 
@@ -444,45 +414,37 @@ public class CodeGenerator extends Visitor<String> {
         }
 
         if (operator.equals(BinaryOperator.and) || operator.equals(BinaryOperator.or)) {
-            String elseLabel = "Label" + getFresh();
-            String afterLabel = "Label" + getFresh();
-
+            String elseLabel = getFreshLabel();
+            String afterLabel = getFreshLabel();
+            String ifCommand = "";
             command += commandLeft;
             command += "invokevirtual java/lang/Boolean/booleanValue()Z\n";
-
             if (operator.equals(BinaryOperator.and))
-                command += "ifeq " + elseLabel + "\n";
+                ifCommand = "ifeq ";
             else
-                command += "ifne " + elseLabel + "\n";
-
+                ifCommand = "ifne ";
+            command += ifCommand + elseLabel + "\n";
             command += commandRight;
             command += "invokevirtual java/lang/Boolean/booleanValue()Z\n";
             command += "goto " + afterLabel + "\n";
             command += elseLabel + ":\n";
-
             command += "iconst_" + (operator.equals(BinaryOperator.or) ? "1" : "0") + "\n";
-
             command += afterLabel + ":\n";
             command += "invokestatic java/lang/Boolean/valueOf(Z)Ljava/lang/Boolean;\n";
         }
 
         if (operator.equals(BinaryOperator.lt) || operator.equals(BinaryOperator.gt)) {
-            String elseLabel = "Label" + getFresh();
-            String afterLabel = "Label" + getFresh();
+            String elseLabel = getFreshLabel();
+            String afterLabel = getFreshLabel();
             String ifCommand = "";
-
-
             command += commandLeft;
             command += "invokevirtual java/lang/Integer/intValue()I\n";
             command += commandRight;
             command += "invokevirtual java/lang/Integer/intValue()I\n";
-
             if (operator.equals(BinaryOperator.lt))
                 ifCommand = "if_icmpge";
             else
                 ifCommand = "if_icmple";
-
-
             command += ifCommand + " " + elseLabel + "\n";
             command += "iconst_1\n";
             command += "goto " + afterLabel + "\n";
@@ -493,10 +455,9 @@ public class CodeGenerator extends Visitor<String> {
         }
 
         if (operator.equals(BinaryOperator.eq)) {
-            String elseLabel = "Label" + getFresh();
-            String afterLabel = "Label" + getFresh();
+            String elseLabel = getFreshLabel();
+            String afterLabel = getFreshLabel();
             String ifCommand = "";
-
             if (tl instanceof IntType) {
                 command += commandLeft;
                 command += "invokevirtual java/lang/Integer/intValue()I\n";
@@ -504,7 +465,6 @@ public class CodeGenerator extends Visitor<String> {
                 command += "invokevirtual java/lang/Integer/intValue()I\n";
                 ifCommand = "if_icmpne";
             }
-
             if (tl instanceof BoolType) {
                 command += commandLeft;
                 command += "invokevirtual java/lang/Boolean/booleanValue()Z\n";
@@ -512,13 +472,11 @@ public class CodeGenerator extends Visitor<String> {
                 command += "invokevirtual java/lang/Boolean/booleanValue()Z\n";
                 ifCommand = "if_icmpne";
             }
-
             if (tl instanceof ListType || tl instanceof FptrType) {
                 command += commandLeft;
                 command += commandRight;
                 ifCommand = "if_acmpne";
             }
-
             command += ifCommand + " " + elseLabel + "\n";
             command += "iconst_1\n";
             command += "goto " + afterLabel + "\n";
@@ -538,10 +496,8 @@ public class CodeGenerator extends Visitor<String> {
         if (unaryExpression.getOperator().equals(UnaryOperator.not)) { //x xor 1 and 1 = not(x)
             command += operand;
             command += "invokevirtual java/lang/Boolean/booleanValue()Z\n";
-
-            String elseLabel = "Label" + getFresh();
-            String afterLabel = "Label" + getFresh();
-
+            String elseLabel = getFreshLabel();
+            String afterLabel = getFreshLabel();
             command += "ldc 1\n";
             command += "ixor\n";
             command += "ldc 1\n";
@@ -560,67 +516,56 @@ public class CodeGenerator extends Visitor<String> {
     @Override
     public String visit(StructAccess structAccess) {
         //todo
+
         return null;
     }
 
     @Override
     public String visit(Identifier identifier) {
-        FunctionSymbolTableItem fsti = getFuncSymbolTableItem(identifier.getName());
-        String command = "";
-        if (fsti == null) { //Not a function name
-            int slot = slotOf(identifier.getName());
-            command = "aload " + slot + "\n";
-        } else { //is a function name
-            command += "new Fptr\n" +
-                    "dup\n" +
-                    "aload_1\n" +
-                    "ldc \"" + identifier.getName() + "\"\n" +
-                    "invokespecial Fptr/<init>(Ljava/lang/Object;Ljava/lang/String;)V\n";
+        String command = null;
+        try {
+            String functionKey = FunctionSymbolTableItem.START_KEY + identifier.getName();
+            FunctionSymbolTableItem functionSymbolTableItem = (FunctionSymbolTableItem) SymbolTable.root.getItem(functionKey);
+            command += "new Fptr\n";
+            command += "aload_0";
+            command += "aload" + getSlot(identifier.getName());
+            command += "invokespecial Fptr/<int>(Ljava/lang/String;)v\n";
+        } catch (ItemNotFoundException e) {
+            Type idType = identifier.accept(expressionTypeChecker);
+            if (idType instanceof IntType || idType instanceof BoolType) {
+                command += "iload" + getSlot(identifier.getName());
+            } else {
+                command += "aload" + getSlot(identifier.getName());
+            }
+            command += "\n";
         }
         return command;
     }
 
     @Override
     public String visit(ListAccessByIndex listAccessByIndex) {
-        String commandList = listAccessByIndex.getInstance().accept(this);
-        String commandIndex = listAccessByIndex.getIndex().accept(this);
-
-        String command = "";
-        command += commandList;
-        command += commandIndex;
-        command += "invokevirtual java/lang/Integer/intValue()I\n";
-        command += "invokevirtual List/getElement(I)Ljava/lang/Object;\n";
-        command += "checkcast java/lang/Integer\n";
-        return command;
+        String commands = null;
+        Type type = listAccessByIndex.accept(expressionTypeChecker);
+        commands += listAccessByIndex.getInstance().accept(this);
+        commands += listAccessByIndex.getIndex().accept(this);
+        commands += "invokevirtual List/getElement(I)Ljava/lang/Object;\n";
+        commands += "checkcast " + makeTypeSignature(type) + "\n";
+        if (type instanceof IntType)
+            commands += "invokevirtual java/lang/Integer/intValue()I\n";
+        if (type instanceof BoolType)
+            commands += "invokevirtual java/lang/Boolean/booleanValue()Z\n";
+        return commands;
     }
 
     @Override
     public String visit(FunctionCall functionCall) {
-        ArrayList<String> argByteCodes = new ArrayList<>();
-        for (Expression expression : functionCall.getArgs()) {
-            String bc = expression.accept(this);
-            Type type = expression.accept(expressionTypeChecker);
-            if (type instanceof ListType) {
-                bc = "new List\n" +
-                        "dup\n" +
-                        bc +
-                        "invokespecial List/<init>(LList;)V\n";
-            }
-            argByteCodes.add(bc);
-        }
-
-        Expression instance = functionCall.getInstance();
-        FptrType instanceType = (FptrType) instance.accept(expressionTypeChecker);
-        String funcName = instanceType.getClass().getName();
-        System.out.print(funcName);
+        //todo
         return null;
     }
 
     @Override
     public String visit(ListSize listSize) {
-        String commandList = listSize.accept(this);
-        String command = "";
-        command += commandList;
+        String command = listSize.getArg().accept(this);
         command += "invokevirtual List/getSize()I\n";
         command += "invokestatic java/lang/Integer/valueOf(I)Ljava/lang/Integer;\n";
         return command;
@@ -628,7 +573,7 @@ public class CodeGenerator extends Visitor<String> {
 
     @Override
     public String visit(ListAppend listAppend) {
-        String command = "";
+        String command = null;
         command += listAppend.getListArg().accept(this);
         command += "dup\n";
         command += listAppend.getElementArg().accept(this);
@@ -638,21 +583,19 @@ public class CodeGenerator extends Visitor<String> {
 
     @Override
     public String visit(IntValue intValue) {
-        String command = "";
-        command += "ldc " + String.valueOf(intValue.getConstant()) + "\n";
-        command += "invokestatic java/lang/Integer/valueOf(I)Ljava/lang/Integer;\n";
-        return command;
+        String commands = "";
+        commands += "ldc " + intValue.getConstant() + "\n";
+        return commands;
     }
 
     @Override
     public String visit(BoolValue boolValue) {
-        String command = "";
+        String commands = "";
         if (boolValue.getConstant())
-            command += "ldc 1\n";
+            commands += "ldc " + "1\n";
         else
-            command += "ldc 0\n";
-        command += "invokestatic java/lang/Boolean/valueOf(Z)Ljava/lang/Boolean;\n";
-        return command;
+            commands += "ldc " + "0\n";
+        return commands;
     }
 
     @Override

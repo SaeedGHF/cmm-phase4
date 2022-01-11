@@ -49,7 +49,7 @@ main() begin
     i = 0
     while i < 4 begin
         order = createOrder(productCatalog[i], i + 1)
-        orders.append(order)
+        append(orders,order)
         i = i + 1
     end
     total = getSum(orders)

@@ -1,11 +1,18 @@
-main() begin
-
+struct ProductCatalog begin
+    int id
+    int price
 end
 
+struct Order begin
+    int quantity
+    struct ProductCatalog product
+end
 
-
-
-
-
-
-
+main() begin
+    int i
+    int total
+    list #struct ProductCatalog productCatalog
+    list #struct Order orders
+    struct Order order
+    i = 5
+end
