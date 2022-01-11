@@ -140,9 +140,6 @@ public class CodeGenerator extends Visitor<String> {
     }
 
 
-
-
-
     @Override
     public String visit(Program program) {
         prepareOutputFolder();
@@ -191,13 +188,13 @@ public class CodeGenerator extends Visitor<String> {
         String header = "";
         //String funcName = currFunc.getFunctionName().getName();
         header += ".method public " + functionDeclaration.getFunctionName().getName() + "(";
-        for(VariableDeclaration arg : functionDeclaration.getArgs()){
+        for (VariableDeclaration arg : functionDeclaration.getArgs()) {
             header += "L" + makeTypeSignature(arg.getVarType()) + ";";
         }
-        if(functionDeclaration.getReturnType() instanceof VoidType)
+        if (functionDeclaration.getReturnType() instanceof VoidType)
             header += ")V";
         else
-            header += ")L"  + makeTypeSignature(functionDeclaration.getReturnType()) + ";";
+            header += ")L" + makeTypeSignature(functionDeclaration.getReturnType()) + ";";
 
         SymbolTable.pop();
         return null;
@@ -552,14 +549,20 @@ public class CodeGenerator extends Visitor<String> {
 
     @Override
     public String visit(ListSize listSize) {
-        //todo
-        return null;
+        String command = listSize.getArg().accept(this);
+        command += "invokevirtual List/getSize()I\n";
+        command += "invokestatic java/lang/Integer/valueOf(I)Ljava/lang/Integer;\n";
+        return command;
     }
 
     @Override
     public String visit(ListAppend listAppend) {
-        //todo
-        return null;
+        String command = null;
+        command += listAppend.getListArg().accept(this);
+        command += "dup\n";
+        command += listAppend.getElementArg().accept(this);
+        command += "invokevirtual List/addElement(Ljava/lang/Object;)V\n";
+        return command;
     }
 
     @Override
