@@ -515,9 +515,38 @@ public class CodeGenerator extends Visitor<String> {
 
     @Override
     public String visit(StructAccess structAccess) {
-        //todo
+        Type type = structAccess.accept(expressionTypeChecker);
+        Type instanceType = structAccess.getInstance().accept(expressionTypeChecker);
+        String name = structAccess.getElement().getName();
+        String commands = "";
 
-        return null;
+        if(instanceType instanceof StructType){
+            String structName = ((StructType) instanceType).getStructName().getName();
+            try {
+                SymbolTable structsym = ((StructSymbolTableItem) SymbolTable.root.getItem(StructSymbolTableItem.START_KEY + structName)).getStructSymbolTable();
+                try {
+                    structsym.getItem(VariableSymbolTableItem.START_KEY + name);
+                    commands += structAccess.getInstance().accept(this);
+                    commands += "getfield " + structName + "/" + name + " L" + makeTypeSignature(type) + ";\n";
+                    if (type instanceof IntType)
+                        commands += "invokevirtual java/lang/Integer/intValue()I\n";
+                    if (type instanceof BoolType)
+                        commands += "invokevirtual java/lang/Boolean/booleanValue()Z\n";
+
+                }
+                catch (ItemNotFoundException elementIsMethod) {
+                    commands += "new Fptr\n";
+                    commands += "dup\n";
+                    commands += structAccess.getInstance().accept(this);
+                    commands += "ldc \"" + name + "\"\n";
+                    commands += "invokespecial Fptr/<init>(Ljava/lang/Object;Ljava/lang/String;)V\n";
+                }
+            }
+            catch (ItemNotFoundException structNotFound) { // never reached
+            }
+        }
+
+        return commands;
     }
 
     @Override
@@ -559,8 +588,54 @@ public class CodeGenerator extends Visitor<String> {
 
     @Override
     public String visit(FunctionCall functionCall) {
-        //todo
-        return null;
+        String commands = "";
+        int tempIndex = slotOf("");
+        ArrayList<Expression> args = functionCall.getArgs();
+        Type retType = ((FptrType) functionCall.getInstance().accept(expressionTypeChecker)).getReturnType();
+        commands += functionCall.getInstance().accept(this);
+        commands += "new java/util/ArrayList\n";
+        commands += "dup\n";
+        commands += "invokespecial java/util/ArrayList/<init>()V\n";
+        commands += "astore " + tempIndex + "\n";
+
+
+        for(Expression arg : args){
+            commands += "aload " + tempIndex + "\n";
+
+            Type argType = arg.accept(expressionTypeChecker);
+
+            if(argType instanceof ListType) {
+                commands += "new List\n";
+                commands += "dup\n";
+            }
+
+            commands += arg.accept(this);
+
+            if(argType instanceof IntType)
+                commands += "invokestatic java/lang/Integer/valueOf(I)Ljava/lang/Integer;\n";
+
+            if(argType instanceof BoolType)
+                commands += "invokestatic java/lang/Boolean/valueOf(Z)Ljava/lang/Boolean;\n";
+
+            if(argType instanceof ListType) {
+                commands += "invokespecial List/<init>(LList;)V\n";
+            }
+
+            commands += "invokevirtual java/util/ArrayList/add(Ljava/lang/Object;)Z\n";
+            commands += "pop\n";
+        }
+
+        commands += "aload " + tempIndex + "\n";
+        commands += "invokevirtual Fptr/invoke(Ljava/util/ArrayList;)Ljava/lang/Object;\n";
+
+        if(!(retType instanceof VoidType))
+            commands += "checkcast " + makeTypeSignature(retType) + "\n";
+
+        if (retType instanceof IntType)
+            commands += "invokevirtual java/lang/Integer/intValue()I\n";
+        if (retType instanceof BoolType)
+            commands += "invokevirtual java/lang/Boolean/booleanValue()Z\n";
+        return commands;
     }
 
     @Override
