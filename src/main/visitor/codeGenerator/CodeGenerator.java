@@ -28,6 +28,8 @@ public class CodeGenerator extends Visitor<String> {
     private int numOfUsedLabel;
     private FunctionDeclaration currFunc;
     private int numOfUsedTemp;
+    private boolean isInStruct;
+    private  ArrayList<VariableDeclaration> allVar = new ArrayList<>();
 
     private StructDeclaration currStruct;
     private ArrayList<String> scopeVars = new ArrayList<>();
@@ -39,6 +41,7 @@ public class CodeGenerator extends Visitor<String> {
         try {
             this.numOfUsedLabel = 0;
             this.numOfUsedTemp = 0;
+            this.isInStruct =false;
             File readingFile = new File(toBeCopied);
             File writingFile = new File(toBePasted);
             InputStream readingFileStream = new FileInputStream(readingFile);
@@ -160,6 +163,7 @@ public class CodeGenerator extends Visitor<String> {
     @Override
     public String visit(StructDeclaration structDeclaration) {
         try {
+            currStruct = structDeclaration;
             String structKey = StructSymbolTableItem.START_KEY + structDeclaration.getStructName().getName();
             StructSymbolTableItem structSymbolTableItem = (StructSymbolTableItem) SymbolTable.root.getItem(structKey);
             SymbolTable.push(structSymbolTableItem.getStructSymbolTable());
@@ -169,6 +173,7 @@ public class CodeGenerator extends Visitor<String> {
         addCommand(".class public " + structDeclaration.getStructName().getName());
         addCommand(".super java/lang/Object");
         scopeVars.add(structDeclaration.getStructName().getName());
+        isInStruct = true;
         addDefaultConstructor();
         structDeclaration.getBody().accept(this);
         addCommand("return");
@@ -192,6 +197,7 @@ public class CodeGenerator extends Visitor<String> {
             String type = makeTypeSignature(variableDeclaration.getVarType());
             command.append(type).append(";");
             scopeVars.add(variableDeclaration.getVarName().getName());
+            allVar.add(variableDeclaration);
         }
         command.append(")");
         String returnType = makeTypeSignature(functionDeclaration.getReturnType());
@@ -200,6 +206,7 @@ public class CodeGenerator extends Visitor<String> {
         functionDeclaration.getBody().accept(this);
         addCommand(".end method");
         scopeVars.clear();
+        allVar.clear();
         SymbolTable.pop();
         return null;
     }
@@ -210,6 +217,30 @@ public class CodeGenerator extends Visitor<String> {
         addCommand(".limit locals " + localLimit);
         addCommand("aload_0");
         addCommand("invokespecial java/lang/Object/<init>()V");
+        String structName = currStruct.getStructName().getName();
+        if(isInStruct){
+            for(VariableDeclaration var : allVar){
+                String varName = var.getVarName().getName();
+                Type varType = var.getVarType();
+                if(varType instanceof StructType || varType instanceof FptrType){
+                    addCommand("aload 0");
+                    addCommand("aconst_null");
+                    addCommand("putfield " + structName + "/" + varName + " L" + makeTypeSignature(varType) + ";\n");
+                }
+                else if(varType instanceof IntType || varType instanceof BoolType){
+                    addCommand("aload 0");
+                    addCommand("ldc 0");
+                    if(varType instanceof IntType)
+                        addCommand("invokestatic java/lang/Integer/valueOf(I)Ljava/lang/Integer;");
+                    if(varType instanceof BoolType)
+                        addCommand("invokestatic java/lang/Boolean/valueOf(Z)Ljava/lang/Boolean;");
+                    addCommand("putfield " + structName + "/" + varName + " L" + makeTypeSignature(varType) + ";\n");
+                }
+//          else initialize
+            }
+        }
+        addCommand("return");
+        addCommand(".end method");
     }
 
     @Override
@@ -229,6 +260,7 @@ public class CodeGenerator extends Visitor<String> {
         addCommand("return");
         addCommand(".end method");
         scopeVars.clear();
+        allVar.clear();
         SymbolTable.pop();
         return null;
     }
@@ -236,6 +268,7 @@ public class CodeGenerator extends Visitor<String> {
     @Override
     public String visit(VariableDeclaration variableDeclaration) {
         scopeVars.add(variableDeclaration.getVarName().getName());
+        allVar.add(variableDeclaration);
         if (variableDeclaration.getDefaultValue() != null)
             addCommand(variableDeclaration.getDefaultValue().accept(this));
         if (variableDeclaration.getVarType() instanceof IntType ||
