@@ -28,6 +28,7 @@ public class CodeGenerator extends Visitor<String> {
     private int numOfUsedLabel;
     private FunctionDeclaration currFunc;
     private int numOfUsedTemp;
+
     private StructDeclaration currStruct;
     private ArrayList<String> scopeVars = new ArrayList<>();
 
@@ -125,6 +126,8 @@ public class CodeGenerator extends Visitor<String> {
             return "Fptr";
         if (t instanceof StructType)
             return ((StructType) t).getStructName().getName();
+        if (t instanceof VoidType)
+            return "V";
         return null;
     }
 
@@ -170,8 +173,6 @@ public class CodeGenerator extends Visitor<String> {
         structDeclaration.getBody().accept(this);
         addCommand("return");
         addCommand(".end method");
-
-
         SymbolTable.pop();
         scopeVars.clear();
         return null;
@@ -185,17 +186,20 @@ public class CodeGenerator extends Visitor<String> {
             SymbolTable.push(functionSymbolTableItem.getFunctionSymbolTable());
         } catch (ItemNotFoundException e) {//unreachable
         }
-        String header = "";
-        //String funcName = currFunc.getFunctionName().getName();
-        header += ".method public " + functionDeclaration.getFunctionName().getName() + "(";
-        for (VariableDeclaration arg : functionDeclaration.getArgs()) {
-            header += "L" + makeTypeSignature(arg.getVarType()) + ";";
+        StringBuilder command = new StringBuilder(".method public " + functionDeclaration.getFunctionName().getName() + "(");
+        scopeVars.add(functionDeclaration.getFunctionName().getName());
+        for (VariableDeclaration variableDeclaration : functionDeclaration.getArgs()) {
+            String type = makeTypeSignature(variableDeclaration.getVarType());
+            command.append(type).append(";");
+            scopeVars.add(variableDeclaration.getVarName().getName());
         }
-        if (functionDeclaration.getReturnType() instanceof VoidType)
-            header += ")V";
-        else
-            header += ")L" + makeTypeSignature(functionDeclaration.getReturnType()) + ";";
-
+        command.append(")");
+        String returnType = makeTypeSignature(functionDeclaration.getReturnType());
+        command.append(returnType);
+        addCommand(command.toString());
+        functionDeclaration.getBody().accept(this);
+        addCommand(".end method");
+        scopeVars.clear();
         SymbolTable.pop();
         return null;
     }
@@ -246,9 +250,9 @@ public class CodeGenerator extends Visitor<String> {
         if (variableDeclaration.getVarType() instanceof IntType ||
                 variableDeclaration.getVarType() instanceof BoolType) {
             addCommand("istore" + getSlot(variableDeclaration.getVarName().getName()));
-            return null;
+        } else {
+            addCommand("astore" + getSlot(variableDeclaration.getVarName().getName()));
         }
-        addCommand("astore" + getSlot(variableDeclaration.getVarName().getName()));
         return null;
     }
 
@@ -283,7 +287,6 @@ public class CodeGenerator extends Visitor<String> {
 
     @Override
     public String visit(ConditionalStmt conditionalStmt) {
-        /*
         String labelFalse = getFreshLabel();
         String labelAfter = getFreshLabel();
         addCommand(conditionalStmt.getCondition().accept(this));
@@ -294,7 +297,6 @@ public class CodeGenerator extends Visitor<String> {
         if (conditionalStmt.getElseBody() != null)
             conditionalStmt.getElseBody().accept(this);
         addCommand(labelAfter + ":");
-         */
         return null;
     }
 
@@ -340,8 +342,19 @@ public class CodeGenerator extends Visitor<String> {
 
     @Override
     public String visit(LoopStmt loopStmt) {
-        //todo
+        loopStmt.getCondition().accept(this);
+        int index = loopStmt.getLine();
+        addCommand("istore " + index);
+        int uniqueLabel = numOfUsedLabel++;
+        addCommand("goto check" + uniqueLabel);
+        addCommand("begin" + uniqueLabel + ":");
+        loopStmt.getBody().accept(this);
+        addCommand("iinc " + index + " -1");
+        addCommand("check" + uniqueLabel + ":");
+        addCommand("iload " + index);
+        addCommand("ifgt begin" + uniqueLabel);
         return null;
+
     }
 
     @Override
@@ -362,7 +375,9 @@ public class CodeGenerator extends Visitor<String> {
 
     @Override
     public String visit(ListSizeStmt listSizeStmt) {
-        //todo
+        expressionTypeChecker.setInFunctionCallStmt(true);
+        addCommand(listSizeStmt.getListSizeExpr().accept(this));
+        expressionTypeChecker.setInFunctionCallStmt(false);
         return null;
     }
 
@@ -501,6 +516,7 @@ public class CodeGenerator extends Visitor<String> {
     @Override
     public String visit(StructAccess structAccess) {
         //todo
+
         return null;
     }
 
