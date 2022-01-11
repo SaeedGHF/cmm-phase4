@@ -1,16 +1,13 @@
 package main.visitor.codeGenerator;
 
-import main.ast.nodes.*;
 import main.ast.nodes.declaration.*;
 import main.ast.nodes.declaration.struct.*;
 import main.ast.nodes.expression.*;
 import main.ast.nodes.expression.operators.*;
-import main.ast.nodes.expression.values.*;
 import main.ast.nodes.expression.values.primitive.*;
 import main.ast.nodes.statement.*;
 import main.ast.types.*;
 import main.ast.types.primitives.*;
-import main.symbolTable.*;
 import main.symbolTable.exceptions.*;
 import main.visitor.Visitor;
 import main.visitor.type.ExpressionTypeChecker;
@@ -19,19 +16,10 @@ import java.io.*;
 import java.util.*;
 
 import main.ast.nodes.Program;
-import main.ast.nodes.declaration.*;
-import main.ast.nodes.declaration.struct.*;
-import main.ast.nodes.expression.Expression;
 import main.ast.nodes.expression.Identifier;
 import main.ast.nodes.expression.operators.BinaryOperator;
-import main.ast.nodes.statement.*;
-import main.ast.types.*;
-import main.ast.types.primitives.*;
-import main.compileError.typeError.*;
 import main.symbolTable.SymbolTable;
-import main.symbolTable.exceptions.*;
 import main.symbolTable.items.*;
-import main.visitor.Visitor;
 
 public class CodeGenerator extends Visitor<String> {
     ExpressionTypeChecker expressionTypeChecker = new ExpressionTypeChecker();
@@ -152,20 +140,7 @@ public class CodeGenerator extends Visitor<String> {
     }
 
 
-    private void addDefaultConstructor() {
-        String className = currStruct.getStructName().getName();
 
-        addCommand(".method public <init>()V");
-        addCommand(".limit stack 128");
-        addCommand(".limit locals 128");
-        addCommand("aload 0");
-
-        addCommand("invokespecial " +  "/<init>()V");
-
-
-
-        //todo
-    }
 
 
     @Override
@@ -194,7 +169,7 @@ public class CodeGenerator extends Visitor<String> {
         addCommand(".class public " + structDeclaration.getStructName().getName());
         addCommand(".super java/lang/Object");
         scopeVars.add(structDeclaration.getStructName().getName());
-        addConstructor();
+        addDefaultConstructor();
         structDeclaration.getBody().accept(this);
         addCommand("return");
         addCommand(".end method");
@@ -228,7 +203,7 @@ public class CodeGenerator extends Visitor<String> {
         return null;
     }
 
-    public void addConstructor() {
+    public void addDefaultConstructor() {
         addCommand(".method public <init>()V");
         addCommand(".limit stack " + stackLimit);
         addCommand(".limit locals " + localLimit);
@@ -248,7 +223,7 @@ public class CodeGenerator extends Visitor<String> {
         addCommand(".class public Main");
         addCommand(".super java/lang/Object");
         addStaticMainMethod();
-        addConstructor();
+        addDefaultConstructor();
         mainDeclaration.getBody().accept(this);
         addCommand("return");
         addCommand(".end method");
